@@ -1,0 +1,104 @@
+#!/usr/bin/env ruby
+
+require 'securerandom'
+require './shamir-secret-sharing.rb'
+
+def reconstruct(shares)
+  ShamirSecretSharing::Base58.combine(shares, true, true)
+rescue ShamirSecretSharing::ShareChecksumError, ShamirSecretSharing::ShareDecodeError => ex
+  $stderr.puts "Failed to reconstruct a secret due to the invalid #{ex.message}"
+  exit(false)
+end
+
+def split(secret, available, needed)
+  ShamirSecretSharing::Base58.split_with_sanity_check(secret, available, needed, true)
+end
+
+def random_string(bytes)
+  ShamirSecretSharing::Base58.encode(SecureRandom.random_bytes(bytes))
+end
+
+def read_secret
+  puts "Secret (if typing manually, end by Enter and Ctrl+D): " unless $quiet
+  $stdin.read.strip
+end
+
+def read_shares
+  puts "Shares (if typing manually, end by Enter and Ctrl+D): " unless $quiet
+  result = $stdin.read.strip.split(/\s+/)
+  raise "Not enough shares to reconstruct secret" if result.size < 2
+  result
+end
+
+def print_secret(secret)
+  puts $quiet ? secret : "Secret: #{secret.inspect}"
+end
+
+def print_shares(shares)
+  shares.each_with_index do |share, i|
+    puts $quiet ? share : "Share ##{i+1}: #{share.inspect}"
+  end
+end
+
+def main
+  require 'optparse'
+  opts = {}
+  op   = OptionParser.new do |p|
+    p.banner = "Usage: sss [options]"
+
+    p.on('--reconstruct', "Reconstruct secret while reading shares from STDIN") do |raw|
+      opts[:reconstruct] = raw
+    end
+
+    p.on('--split AVAILABLE,NEEDED', "Split secret into AVAILABLE number of shares, NEEDED of which are required to reconstruct secret") do |raw|
+      value = raw.split(',').map(&:to_i)
+      if value.size == 2 &&
+        value.all? { |i| i >= 2 } &&
+        value[0] >= value[1]
+
+        opts[:split] = value
+      else
+        puts "invalid argument: --split #{raw}", p
+        exit(false)
+      end
+    end
+
+    p.on('--random N', "Generate random secret of N bytes instead of reading secret from STDIN") do |raw|
+      value = raw.to_i
+      if value > 0
+        opts[:random] = value
+      else
+        puts "invalid argument: --random #{raw}", p
+        exit(false)
+      end
+    end
+
+    p.on('--quiet', 'Use STDOUT only for data output') do |raw|
+      $quiet = raw
+    end
+  end
+  op.parse!
+
+  # puts opts
+  if opts.empty?
+    puts op
+  elsif opts[:reconstruct]
+    puts "--- Reconstructing secret ---" unless $quiet
+    shares = read_shares
+    print_shares(shares) unless $quiet
+    secret = reconstruct(shares)
+    puts "--- Secret reconstructed ---" unless $quiet
+    print_secret(secret)
+  elsif opts[:split]
+    puts "--- Splitting secret ---" unless $quiet
+    secret = opts[:random] ? random_string(opts[:random]) : read_secret
+    print_secret(secret)
+    shares = split(secret, opts[:split][0], opts[:split][1])
+    puts "--- Secret splitted ---" unless $quiet
+    print_shares(shares)
+  end
+end
+
+if $0 == __FILE__
+  main
+end
